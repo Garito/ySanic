@@ -9,7 +9,7 @@ Todos shows how to program the typical plain structure while Nodes shows how to 
 If you respect the contract you could use the helpers (like the routes generators)
 
 ## Installation
-```pip install -e git+http://github.com/Garito/ySanic#egg=ySanic```
+```pip install ySanic```
 
 ## Help
 Feel free to help if you think something is weird or incomplete by submiting a pull request
