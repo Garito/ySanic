@@ -277,7 +277,7 @@ class yBlueprint(Blueprint):
 
   @classmethod
   def generate_tree_blueprint(cls, name, url_prefix = None, host = None, version = None, strict_slashes = False):
-    bp = yBlueprint(name, url_prefix, host, version, strict_slashes)
+    bp = name if isinstance(name, yBlueprint) else yBlueprint(name, url_prefix, host, version, strict_slashes)
 
     @bp.options("/<path:path>/new/<as_>")
     def factory_options(request, *args, **kwargs):
