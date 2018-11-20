@@ -22,8 +22,10 @@ class ySanic(Sanic):
     self.models = models
     super().__init__(**kwargs)
 
-  def notify(self, notification, data):
+  async def notify(self, notification, data):
     if hasattr(self, notification) and not self.config.get("DEBUG_EMAILS", False):
+      func = getattr(self, notification)
+      return await func(data) if iscoroutinefunction(func) else func(data)
       return getattr(self, notification)(data)
     else:
       self.log.info("{}: {}".format(notification, data))
