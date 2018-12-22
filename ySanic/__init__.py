@@ -15,13 +15,19 @@ from yModel import Schema, Tree, ErrorSchema
 from yModel.mongo import NotFound
 
 from json import dumps, JSONEncoder
-from re import _pattern_type
+
+import re
+if hasattr(re, '_pattern_type'):
+  from re import _pattern_type as isPattern
+else:
+  from typing import Pattern as isPattern
+
 from sanic.views import CompositionView
 from typing import Type, Callable
 
 class MyEncoder(JSONEncoder):
   def default(self, obj):
-    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, _pattern_type, Type, Callable, set)):
+    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set)):
       return str(obj)
 
     return JSONEncoder.default(self, obj)
