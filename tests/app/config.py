@@ -1,5 +1,6 @@
 class Config:
   DEBUG = True
+  DEBUG_EMAILS = True
   TESTING = True
 
   HOST = "localhost"
