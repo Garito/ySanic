@@ -23,3 +23,14 @@ So notaroute is the way to exclude members of the model that uses ```consumes```
 
 ### Jinja2 emails
 Anyone that has deal with emails know the nightmare they are so introducing jinja2 as a template system only simplifys what its is difficult as it is
+
+### Generics factory, dispatcher and options
+Now factory has been abstracted as a pattern in a similar way as dispatcher is
+
+You can define which member is going to be called when a particular factory is required (which allows to have more than one type of children defined. This requieres a unique index to avoid same slug for two childs and to group them by type)
+
+A generic_options super simple options has been defined and will be load with your routes
+
+A generic very introspection oriented JSON encoder has been added as MyEncoder for debugging purposes. You can use it if you need it
+
+Tests are made but, you know, test are always consider incomplet but will grow up as cases show up

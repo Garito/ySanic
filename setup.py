@@ -6,7 +6,7 @@ def readme():
 
 setup(
   name = "ySanic",
-  version = "0.0.1",
+  version = "0.1.0",
   description = "ySanic subclass with some addons to sanic",
   long_description = readme(),
   long_description_content_type='text/markdown',
