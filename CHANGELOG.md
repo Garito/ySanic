@@ -37,3 +37,4 @@ Tests are made but, you know, test are always consider incomplet but will grow u
 
 ### Automatic permissions when used with yAuth
 It uses the yAuth's decorator ```permissions``` to map one on one with the API methods with the format ```<Model>/<member>```
+It is possible to define default roles for the permissions
