@@ -148,7 +148,8 @@ class ySanic(Sanic):
             context, permission = method.__qualname__.split('.')
             if permission == "__call__":
               permission = "call"
-            permissions.append({"context": context, "name": permission, "description": method.__doc__})
+            permissions.append({"context": context, "name": permission, "description": method.__doc__,
+              "roles": method.__decorators__["permission"]["default"]})
 
     return data, permissions
 
