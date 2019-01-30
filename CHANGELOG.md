@@ -34,3 +34,6 @@ A generic_options super simple options has been defined and will be load with yo
 A generic very introspection oriented JSON encoder has been added as MyEncoder for debugging purposes. You can use it if you need it
 
 Tests are made but, you know, test are always consider incomplet but will grow up as cases show up
+
+### Automatic permissions when used with yAuth
+It uses the yAuth's decorator ```permissions``` to map one on one with the API methods with the format ```<Model>/<member>```

@@ -41,7 +41,7 @@ class ySanic(Sanic):
 
     self.models = models
     self._models_by_type = self._models_types()
-    self._inspected = self._inspect()
+    self._inspected, self._permissions = self._inspect()
 
     if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
       self._route_adder("", "/openapi", "GET", self.openapi)
@@ -76,6 +76,7 @@ class ySanic(Sanic):
     return {"root": root[0] if len(root) > 0 else None, "trees": not_root, "leafs": leafs, "independent": independent, "inout": inout}
 
   def _inspect(self, models = None, add_routes = False):
+    permissions = []
     data = {}
     for name, model in getmembers(models or self.models, lambda m: isclass(m) and not m.__module__.startswith("yModel")):
       model_methods = getmembers(model, lambda m: (isfunction(m) or ismethod(m)) and hasattr(m, "__decorators__"))
@@ -143,7 +144,13 @@ class ySanic(Sanic):
                 if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
                   self._add_route(model, "view", "tree", data[name]["out"]["views"][method_name])
 
-    return data
+          if "permission" in method.__decorators__.keys():
+            context, permission = method.__qualname__.split('.')
+            if permission == "__call__":
+              permission = "call"
+            permissions.append({"context": context, "name": permission, "description": method.__doc__})
+
+    return data, permissions
 
   def _route_adder(self, prefix, url, verb, endpoint):
     if prefix:
@@ -301,7 +308,7 @@ class MongoySanic(ySanic):
     super().__init__(models, **kwargs)
 
   async def get_root(self):
-    doc = await self.table.find_one({"path": "", "name": ""})
+    doc = await self.table.find_one({"path": ""})
     if doc:
       model = getattr(self.models, doc["type"])(self.table)
       model.load(doc)
