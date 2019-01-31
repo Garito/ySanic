@@ -36,18 +36,16 @@ class ySanic(Sanic):
   log = logger
 
   def __init__(self, models, **kwargs):
-    add_routes = kwargs.pop("add_routes", False)
+    add_routes = kwargs.pop("add_routes", True)
     super().__init__(**kwargs)
 
     self.models = models
     self._models_by_type = self._models_types()
-    self._inspected, self._permissions = self._inspect()
-
-    if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
-      self._route_adder("", "/openapi", "GET", self.openapi)
+    self._inspected, self._permissions, self._generated_routes = self._inspect(add_routes = add_routes)
 
     # self.log.info(dumps(self._models_by_type, indent = 2))
     # self.log.info(dumps(self._inspected, indent = 2, cls = MyEncoder))
+    # self.log.info(dumps(self._generated_routes, indent = 2, cls = MyEncoder))
     # self.log.info(dumps(self.router.routes_all, indent = 2, cls = MyEncoder))
 
   def _models_types(self, models = None):
@@ -75,9 +73,10 @@ class ySanic(Sanic):
 
     return {"root": root[0] if len(root) > 0 else None, "trees": not_root, "leafs": leafs, "independent": independent, "inout": inout}
 
-  def _inspect(self, models = None, add_routes = False):
+  def _inspect(self, models = None, add_routes = True):
     permissions = []
     data = {}
+    routes = []
     for name, model in getmembers(models or self.models, lambda m: isclass(m) and not m.__module__.startswith("yModel")):
       model_methods = getmembers(model, lambda m: (isfunction(m) or ismethod(m)) and hasattr(m, "__decorators__"))
       if model_methods:
@@ -96,53 +95,39 @@ class ySanic(Sanic):
 
         for method_name, method in model_methods:
           if "consumes" in method.__decorators__:
-            if "in" not in data[name]:
-              data[name]["in"] = {}
-
+            dir_ = "in"
             if (hasattr(model, "factories") and method_name in model.factories.values()) or method.__decorators__["consumes"]["model"] == model.__name__:
-              if "factories" not in data[name]["in"]:
-                data[name]["in"]["factories"] = {}
-
-              data[name]["in"]["factories"][method_name] = {"method": method, "decorators": method.__decorators__}
-
-              if not method.__decorators__.get("notaroute", False):
-                self._add_route(model, "factory", data[name]["type"], data[name]["in"]["factories"][method_name])
-                if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
-                  self._add_route(model, "factory", "tree", data[name]["in"]["factories"][method_name])
+              type_, types_ = "factory", "factories"
             else:
-              if "updaters" not in data[name]["in"]:
-                data[name]["in"]["updaters"] = {}
-
-              data[name]["in"]["updaters"][method_name] = {"method": method, "decorators": method.__decorators__}
-
-              if not method.__decorators__.get("notaroute", False):
-                self._add_route(model, "updater", data[name]["type"], data[name]["in"]["updaters"][method_name])
-                if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
-                  self._add_route(model, "updater", "tree", data[name]["in"]["updaters"][method_name])
+              type_, types_ = "updater", "updaters"
           else:
-            if "out" not in data[name]:
-              data[name]["out"] = {}
+            dir_ = "out"
 
             if method_name in ["remove", "find_and_remove"]:
-              if "remover" not in data[name]["out"]:
-                data[name]["out"]["removers"] = {}
-
-              data[name]["out"]["removers"][method_name] = {"method": method, "decorators": method.__decorators__}
-
-              if not method.__decorators__.get("notaroute", False):
-                self._add_route(model, "remover", data[name]["type"], data[name]["out"]["removers"][method_name])
-                if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
-                  self._add_route(model, "remover", "tree", data[name]["out"]["removers"][method_name])
+              type_, types_ = "remover", "removers"
             else:
-              if "views" not in data[name]["out"]:
-                data[name]["out"]["views"] = {}
+              type_, types_ = "view", "views"
 
-              data[name]["out"]["views"][method_name] = {"method": method, "decorators": method.__decorators__}
+          if dir_ not in data[name]:
+            data[name][dir_] = {}
 
-              if not method.__decorators__.get("notaroute", False):
-                self._add_route(model, "view", data[name]["type"], data[name]["out"]["views"][method_name])
-                if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
-                  self._add_route(model, "view", "tree", data[name]["out"]["views"][method_name])
+          if types_ not in data[name][dir_]:
+            data[name][dir_][types_] = {}
+
+          data[name][dir_][types_][method_name] = {"method": method, "decorators": method.__decorators__}
+
+          if not method.__decorators__.get("notaroute", False):
+            route = {"model": model, "type_": type_, "is_": data[name]["type"], "data": data[name][dir_][types_][method_name]}
+            routes.append(route)
+
+            if add_routes:
+              self._add_route(**route)
+            if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
+              route = {"model": model, "type_": type_, "is_": "tree", "data": data[name][dir_][types_][method_name]}
+              routes.append(route)
+
+              if add_routes:
+                self._add_route(**route)
 
           if "permission" in method.__decorators__.keys():
             context, permission = method.__qualname__.split('.')
@@ -151,7 +136,17 @@ class ySanic(Sanic):
             permissions.append({"context": context, "name": permission, "description": method.__doc__,
               "roles": method.__decorators__["permission"]["default"]})
 
-    return data, permissions
+    return data, permissions, routes
+
+  def _add_routes(self, routes = None):
+    if routes is None:
+      routes = self._generated_routes
+
+    for route in routes:
+      self._add_route(**route)
+
+    if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
+      self._route_adder("", "/openapi", "GET", self.openapi)
 
   def _route_adder(self, prefix, url, verb, endpoint):
     if prefix:
@@ -265,9 +260,6 @@ class ySanic(Sanic):
     error.load({"message": "{} not found".format(path), "code": 404})
     return response.json(error.to_plain_dict(), 404)
 
-  async def openapi(self, request):
-    return response.json(self.openapi_v3())
-
   async def generic_options(self, request, *args, **kwargs):
     return response.text("", status = 204)
 
@@ -331,11 +323,7 @@ class MongoySanic(ySanic):
       path = PurePath(path)
       purePaths.append({"path": str(path.parent), "slug": path.name})
 
-    if len(purePaths) == 1:
-      result = await self.table.find_one(purePaths[0])
-    else:
-      result = await self.table.find({"$or": purePaths}).to_list(None)
-
+    result = await self.table.find_one(purePaths[0]) if len(purePaths) == 1 else await self.table.find({"$or": purePaths}).to_list(None)
     return result
 
   async def get_paper(self, path):
