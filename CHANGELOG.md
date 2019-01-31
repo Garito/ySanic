@@ -38,3 +38,7 @@ Tests are made but, you know, test are always consider incomplet but will grow u
 ### Automatic permissions when used with yAuth
 It uses the yAuth's decorator ```permissions``` to map one on one with the API methods with the format ```<Model>/<member>```
 It is possible to define default roles for the permissions
+
+### Allow to load the generated routes on need
+If add_routes is False on the constructor it will not load the routes (but will prepare them in case of need)
+Then it is possible to load them by calling ```<ySanic object>._add_routes()
