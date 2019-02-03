@@ -6,6 +6,8 @@ from functools import wraps
 from smtplib import SMTP
 from email.mime.text import MIMEText
 
+import bson
+
 from sanic import Sanic, response
 from sanic.blueprints import Blueprint
 from sanic.log import logger
@@ -27,7 +29,7 @@ from typing import Type, Callable
 
 class MyEncoder(JSONEncoder):
   def default(self, obj):
-    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set)):
+    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set, bson.ObjectId)):
       return str(obj)
 
     return JSONEncoder.default(self, obj)
