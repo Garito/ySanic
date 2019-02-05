@@ -162,7 +162,7 @@ class Community(MongoTree):
     """Creates a new user from a previous invitation"""
     invitation = Invitation(self.table)
     await invitation.get(_id = bson.ObjectId(request.json.get("code", None)))
-    await invitation.delete()
+    await invitation.delete(request.app.models)
     await self.create_child(model, as_)
 
   @produces(OkListResult, as_ = "result", description = "Returns a list of users in the community in the key result")

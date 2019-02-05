@@ -114,10 +114,16 @@ class TestNode(TestCase):
     self.assertEqual(resp.status, 200)
     self.assertTrue(resp.json["ok"])
     self.assertIn("result", resp.json)
-    expected = self.user.copy()
-    expected["_id"] = str(expected["_id"])
-    expected["trees"].append(data["slug"])
-    self.assertListEqual([expected], resp.json["result"])
+
+    community = self.table.find_one({"path": ""})
+    community["_id"] = str(community["_id"])
+    community["users"] = [str(user) for user in community["users"]]
+    community["invitations"] = [str(invitation) for invitation in community["invitations"]]
+    user = {"_id": str(self.user["_id"]), "type": self.user["type"], "path": self.user["path"], "name": self.user["name"],
+      "slug": self.user["slug"], "email": self.user["email"], "trees": self.user["trees"] + [data["slug"]]} 
+    expected = [community, user]
+
+    self.assertListEqual(expected, resp.json["result"])
 
     self.table.delete_one({"_id": data["_id"]})
     self.table.update_one({"_id": self.user["_id"]}, {"$pull": {"trees": data["slug"]}})
@@ -145,14 +151,17 @@ class TestNode(TestCase):
     self.assertEqual(resp.status, 200)
     self.assertTrue(resp.json["ok"])
     self.assertIn("result", resp.json)
-    user = self.user.copy()
-    user["_id"] = str(user["_id"])
-    user["trees"] = [data[0]["slug"]]
-    gp = data[0].copy()
-    gp["_id"] = str(gp["_id"])
-    p = data[1].copy()
-    p["_id"] = str(p["_id"])
-    expected = [user, gp, p]
+    community = self.table.find_one({"path": ""})
+    community["_id"] = str(community["_id"])
+    community["users"] = [str(user) for user in community["users"]]
+    community["invitations"] = [str(invitation) for invitation in community["invitations"]]
+    user = {"_id": str(self.user["_id"]), "type": self.user["type"], "path": self.user["path"], "name": self.user["name"],
+      "slug": self.user["slug"], "email": self.user["email"], "trees": self.user["trees"] + [data[0]["slug"]]}
+    expected = [community, user]
+    for rel in data[:-1]:
+      dat = {"_id": str(rel["_id"]), "type": rel["type"], "name": rel["name"], "slug": rel["slug"], "path": rel["path"], "nodes": rel["nodes"]}
+      expected.append(dat)
+
     self.assertListEqual(expected, resp.json["result"])
 
     for tree in data:
