@@ -45,6 +45,8 @@ class ySanic(Sanic):
     self._models_by_type = self._models_types()
     self._inspected, self._permissions, self._generated_routes = self._inspect(add_routes = add_routes)
 
+    if add_routes:
+      self._add_openapi_route()
     # self.log.info(dumps(self._models_by_type, indent = 2))
     # self.log.info(dumps(self._inspected, indent = 2, cls = MyEncoder))
     # self.log.info(dumps(self._generated_routes, indent = 2, cls = MyEncoder))
@@ -135,10 +137,15 @@ class ySanic(Sanic):
             context, permission = method.__qualname__.split('.')
             if permission == "__call__":
               permission = "call"
-            permissions.append({"context": context, "name": permission, "description": method.__doc__,
+            permissions.append({"context": context, "name": permission,
+              "description": method.__decorators__["permission"].get("description", method.__doc__),
               "roles": method.__decorators__["permission"]["default"]})
 
     return data, permissions, routes
+
+  def _add_openapi_route(self):
+    if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
+      self._route_adder("", "/openapi", "GET", self.openapi)
 
   def _add_routes(self, routes = None):
     if routes is None:
@@ -147,8 +154,7 @@ class ySanic(Sanic):
     for route in routes:
       self._add_route(**route)
 
-    if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
-      self._route_adder("", "/openapi", "GET", self.openapi)
+    self._add_openapi_route()
 
   def _route_adder(self, prefix, url, verb, endpoint):
     if prefix:
