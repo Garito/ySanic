@@ -1,12 +1,10 @@
-from inspect import getmembers, isclass, isfunction, ismethod, iscoroutinefunction, getmro
+from inspect import getmembers, isclass, isfunction, ismethod, iscoroutinefunction
 from time import perf_counter, process_time
 from pathlib import PurePath
 from logging import getLogger, INFO
 from functools import wraps
 from smtplib import SMTP
 from email.mime.text import MIMEText
-
-import bson
 
 from sanic import Sanic, response
 from sanic.blueprints import Blueprint
@@ -29,7 +27,7 @@ from typing import Type, Callable
 
 class MyEncoder(JSONEncoder):
   def default(self, obj):
-    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set, bson.ObjectId)):
+    if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set)):
       return str(obj)
 
     return JSONEncoder.default(self, obj)
@@ -38,123 +36,246 @@ class ySanic(Sanic):
   log = logger
 
   def __init__(self, models, **kwargs):
-    add_routes = kwargs.pop("add_routes", True)
     super().__init__(**kwargs)
 
     self.models = models
-    self._models_by_type = self._models_types()
-    self._inspected, self._permissions, self._generated_routes = self._inspect(add_routes = add_routes)
 
-    if add_routes:
+    if hasattr(self, "_add_openapi_route"):
       self._add_openapi_route()
-    # self.log.info(dumps(self._models_by_type, indent = 2))
-    # self.log.info(dumps(self._inspected, indent = 2, cls = MyEncoder))
-    # self.log.info(dumps(self._generated_routes, indent = 2, cls = MyEncoder))
-    # self.log.info(dumps(self.router.routes_all, indent = 2, cls = MyEncoder))
 
-  def _models_types(self, models = None):
-    trees = getmembers(models or self.models, lambda m: isclass(m) and issubclass(m, Tree))
-    not_trees = getmembers(models or self.models, lambda m: isclass(m) and issubclass(m, Schema) and not issubclass(m, Tree))
-    root = [name for name, model in trees]
-    not_root = []
-    inout = [name for name, model in not_trees]
-    leafs = []
+    self._checkings = self._checks(models)
+    self._permissions = self._checkings.pop("perms")
 
-    for name, model in trees:
-      for child in getattr(model, "children_models", {}).values():
-        if child in root and child != model.__name__:
-          del root[root.index(child)]
-          not_root.append(child)
-        elif child in inout:
-          del inout[inout.index(child)]
-          leafs.append(child)
+  def _is_recursive(self, model):
+    return hasattr(model[1], "children_models") and model[0] in model[1].children_models.values()
 
-    independent = []
-    for name, model in not_trees:
-      if name in inout and getmembers(model, lambda m: (ismethod(m) or isfunction(m)) and m.__module__ == model.__module__):
-        del inout[inout.index(name)]
-        independent.append(name)
+  def _build(self, model, endpoint, routes, route, verb, code, path_param, models):
+    schemas = {}
+    perms = []
+    if route not in routes:
+      routes[route] = {}
 
-    return {"root": root[0] if len(root) > 0 else None, "trees": not_root, "leafs": leafs, "independent": independent, "inout": inout}
+    if path_param:
+      if "parameters" not in routes[route]:
+        routes[route]["parameters"] = []
 
-  def _inspect(self, models = None, add_routes = True):
-    permissions = []
-    data = {}
-    routes = []
-    for name, model in getmembers(models or self.models, lambda m: isclass(m) and not m.__module__.startswith("yModel")):
-      model_methods = getmembers(model, lambda m: (isfunction(m) or ismethod(m)) and hasattr(m, "__decorators__"))
-      if model_methods:
-        data[name] = {}
-        if name == self._models_by_type["root"]:
-          data[name]["type"] = "root"
-        elif name in self._models_by_type["trees"]:
-          data[name]["type"] = "tree"
-        elif name in self._models_by_type["independent"]:
-          data[name]["type"] = "independent"
+      param = {"$ref": "#/components/parameters/{}_Path".format(model.__name__)}
+      try:
+        routes[route]["parameters"].index(param)
+      except:
+        routes[route]["parameters"].append(param)
+
+    verb = verb.lower()
+    if verb not in routes[route]:
+      routes[route][verb] = {}
+
+    endpoint_name = "call" if endpoint.__name__ == "__call__" else endpoint.__name__
+    if path_param:
+      routes[route][verb]["operationId"] = "{}/{}".format(model.__name__, endpoint_name)
+    else:
+      routes[route][verb]["operationId"] = "Root/{}".format(endpoint_name)
+    if endpoint.__doc__:
+      routes[route][verb]["summary"] = endpoint.__doc__
+
+    keys = endpoint.__decorators__.keys()
+    if "consumes" in keys:
+      data = endpoint.__decorators__["consumes"]
+      consumes_model = getattr(models, data["model"]) if isinstance(data["model"], str) else data["model"]
+      routes[route][verb]["requestBody"] = {
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/{}".format(consumes_model.__name__)}
+          }
+        }
+      }
+      schemas[consumes_model.__name__] = consumes_model
+
+    if "responses" not in routes[route][verb]:
+      routes[route][verb]["responses"] = {}
+
+    if code not in routes[route][verb]["responses"]:
+      routes[route][verb]["responses"][code] = {}
+
+    if "produces" in keys:
+      data = endpoint.__decorators__["produces"]
+      produces_model = getattr(models, data["model"]) if isinstance(data["model"], str) else data["model"]
+      routes[route][verb]["responses"][code]["description"] = data["description"]
+      routes[route][verb]["responses"][code]["content"] = {
+        "application/json": {"schema": {"$ref": "#/components/schemas/{}".format(produces_model.__name__)}}
+      }
+      schemas[produces_model.__name__] = produces_model
+
+    if "can_crash" in keys:
+      data = endpoint.__decorators__["can_crash"]
+      for error in data.values():
+        if error["code"] not in routes[route][verb]["responses"]:
+          routes[route][verb]["responses"][error["code"]] = {}
+        routes[route][verb]["responses"][error["code"]]["description"] = error["description"] or ''
+        routes[route][verb]["responses"][error["code"]]["content"] = {
+          "application/json": {"schema": {"$ref": "#/components/schemas/{}".format(error["model"].__name__)}}
+        }
+        schemas[error["model"].__name__] = error["model"]
+
+    if "permission" in keys and path_param:
+      data = endpoint.__decorators__["permission"]
+      ep_name = "call" if endpoint.__name__ == "__call__" else endpoint.__name__
+      perm_dict = {"context": model.__name__, "name": ep_name, "roles": data["default"]}
+      if "description" in data:
+        perm_dict["description"] = data["description"]
+      perms.append(perm_dict)
+
+    #   routes[route][verb]["security"] =[{"$ref": "#/components/securitySchemes/{}_{}".format(model.__name__, ep_name)}]
+
+    return schemas, perms
+
+  def _check(self, model, models, is_root = False):
+    routes = {}
+    params = {}
+    schemas = {}
+    perms = []
+    paths = {"no_path": [], "path": []}
+    path_name = "{}_Path".format(model[0])
+    path = "/{{{}}}/".format(path_name)
+    real_path = "/<path:path>/"
+    recursive = self._is_recursive(model)
+    for endpoint in getmembers(model[1], lambda m: hasattr(m, "__decorators__")):
+      keys = endpoint[1].__decorators__.keys()
+      code = 200
+      real_route = None
+      real_endpoint = self.dispatcher
+      path_param = False
+
+      if endpoint[0] in ["__call__", "remove"]:
+        verb = "DELETE" if endpoint[0] == "remove" else "GET"
+        if is_root:
+          root_route = "/"
+
+        if not is_root or recursive:
+          route = path
+          real_route = ""
+          path_param = True
+      elif endpoint[0] == "update":
+        verb = "PUT"
+        if is_root:
+          root_route = "/"
+
+        if not is_root or recursive:
+          route = path
+          real_route = ""
+          path_param = True
+      elif "consumes" in keys:
+        consumed = getattr(endpoint[1].__decorators__["consumes"]["model"], "__name__", endpoint[1].__decorators__["consumes"]["model"])
+
+        if hasattr(model[1], "factories") and endpoint[0] in model[1].factories.values():
+          idx = list(model[1].children_models.values()).index(consumed)
+          oa_url = "new/{}".format(list(model[1].children_models.keys())[idx])
+
+          verb, code, real_route = ("POST", 201, "new/<as_>")
+          real_endpoint = self.factory
         else:
-          data[name]["type"] = "leaf"
+          oa_url = None
+          verb, code, real_route = ("PUT", 200, endpoint[0])
 
-        if data[name]["type"] in ["root", "tree"]:
-          data[name]["recursive"] = model.__name__ in getattr(model, "children_models", {}).values()
+        if is_root:
+          root_route = "/{}".format(oa_url or real_route)
 
-        for method_name, method in model_methods:
-          if "consumes" in method.__decorators__:
-            dir_ = "in"
-            if (hasattr(model, "factories") and method_name in model.factories.values()) or method.__decorators__["consumes"]["model"] == model.__name__:
-              type_, types_ = "factory", "factories"
-            else:
-              type_, types_ = "updater", "updaters"
-          else:
-            dir_ = "out"
+        if not is_root or recursive:
+          route = "{}{}".format(path, oa_url or real_route)
+          path_param = True
+      elif "produces" in keys:
+        verb = "GET"
+        if is_root:
+          root_route = "/{}".format(endpoint[0])
 
-            if method_name in ["remove", "find_and_remove"]:
-              type_, types_ = "remover", "removers"
-            else:
-              type_, types_ = "view", "views"
+        if not is_root or recursive:
+          route = "{}{}".format(path, endpoint[0])
+          real_route = endpoint[0]
+          path_param = True
 
-          if dir_ not in data[name]:
-            data[name][dir_] = {}
+      if is_root:
+        if "notaroute" not in keys or endpoint[1].__decorators__["notaroute"]["when"] is None or "main" not in endpoint[1].__decorators__["notaroute"]["when"]:
+          has_schemas, has_perms = self._build(model[1], endpoint[1], routes, root_route, verb, code, False, models)
+          if has_schemas:
+            schemas.update(has_schemas)
+          if has_perms:
+            perms += has_perms
+          if root_route == "/":
+            paths["no_path"].append((None, "/", verb, real_endpoint))
+          elif real_route == "new/<as_>" and ("/", 'new/<as_>', "POST", real_endpoint) not in paths["no_path"]:
+            paths["no_path"].append(("/", real_route, verb, real_endpoint))
+        if "notaroute" not in keys or endpoint[1].__decorators__["notaroute"]["when"] is None or "recursive" not in endpoint[1].__decorators__["notaroute"]["when"]:
+          has_schemas, has_perms = self._build(model[1], endpoint[1], routes, route, verb, code, path_param, models)
+          if has_schemas:
+            schemas.update(has_schemas)
+          if has_perms:
+            perms += has_perms
+          paths["path"].append((real_path, real_route, verb, real_endpoint))
+      elif "notaroute" not in keys or endpoint[1].__decorators__["notaroute"]["when"] is None or "main" not in endpoint[1].__decorators__["notaroute"]["when"]:
+        has_schemas, has_perms = self._build(model[1], endpoint[1], routes, route, verb, code, path_param, models)
+        if has_schemas:
+          schemas.update(has_schemas)
+        if has_perms:
+            perms += has_perms
+        paths["path"].append((real_path, real_route, verb, real_endpoint))
 
-          if types_ not in data[name][dir_]:
-            data[name][dir_][types_] = {}
+      if path_param:
+        if path_name not in params:
+          params[path_name] = {
+            "name": path_name, "in": "path", "description": "The {}'s URI".format(model[0]), "required": True, "schema": {"type": "string"}
+          }
 
-          data[name][dir_][types_][method_name] = {"method": method, "decorators": method.__decorators__}
+    return {"recursive": recursive, "routes": routes, "params": params, "schemas": schemas, "perms": perms, "paths": paths}
 
-          if not method.__decorators__.get("notaroute", False):
-            route = {"model": model, "type_": type_, "is_": data[name]["type"], "data": data[name][dir_][types_][method_name]}
-            routes.append(route)
+  def _checks(self, models = None):
+    if models is None:
+      models = self.models
 
-            if add_routes:
-              self._add_route(**route)
-            if data[name]["type"] == "root" and data[name]["recursive"] and not self._models_by_type["trees"]:
-              route = {"model": model, "type_": type_, "is_": "tree", "data": data[name][dir_][types_][method_name]}
-              routes.append(route)
+    root = None
+    trees = []
+    perms = []
 
-              if add_routes:
-                self._add_route(**route)
+    for model in getmembers(models, lambda m: isclass(m) and issubclass(m, Tree)):
+      if hasattr(model[1], "auth") or hasattr(model, "get_global_context"):
+        checks = self._check(model, models, True)
+        has_perms = checks.pop("perms", False)
+        if has_perms:
+          perms.extend(has_perms)
+        root = (model[0], model[1], checks)
+      else:
+        if "path" in model[1]._declared_fields:
+          checks = self._check(model, models)
+          has_perms = checks.pop("perms", False)
+          if has_perms:
+            perms.extend(has_perms)
+          trees.append((model[0], model[1], checks))
 
-          if "permission" in method.__decorators__.keys():
-            context, permission = method.__qualname__.split('.')
-            if permission == "__call__":
-              permission = "call"
-            permissions.append({"context": context, "name": permission,
-              "description": method.__decorators__["permission"].get("description", method.__doc__),
-              "roles": method.__decorators__["permission"]["default"]})
+    root_paths = root[2].pop("paths", {})
+    if root_paths:
+      if "no_path" in root_paths:
+        for path in root_paths["no_path"]:
+          self._route_adder(*path)
+      if "path" in root_paths:
+        for path in root_paths["path"]:
+          self._route_adder(*path)
+    for tree in trees:
+      for path in tree[2].pop("paths", [])["path"]:
+        self._route_adder(*path)
 
-    return data, permissions, routes
+    return {"root": root, "trees": trees, "perms": perms}
 
-  def _add_openapi_route(self):
-    if "yOpenSanic" in [class_.__name__ for class_ in getmro(self.__class__)]:
-      self._route_adder("", "/openapi", "GET", self.openapi)
+  def _print_tree(self, models_types, models, model = None, indent = 0):
+    if model is None:
+      model = models_types["root"]
 
-  def _add_routes(self, routes = None):
-    if routes is None:
-      routes = self._generated_routes
+    print("{}{}".format("|  " * indent, model[0])) #, getattr(model[1], "children_models", {}).keys()))
 
-    for route in routes:
-      self._add_route(**route)
-
-    self._add_openapi_route()
+    if hasattr(model[1], "children_models"):
+      for child in model[1].children_models.values():
+        theModel = (child, getattr(models, child))
+        if self._is_recursive(theModel) and model[0] == theModel[0]:
+          print("{}{}".format("|  " * (indent + 1), theModel[0]))
+        else:
+          self._print_tree(models_types, models, theModel, indent + 1)
 
   def _route_adder(self, prefix, url, verb, endpoint):
     if prefix:
@@ -209,6 +330,17 @@ class ySanic(Sanic):
 
     self._route_adder(prefix, url, verb, endpoint)
 
+  def _debug_endpoints(self):
+    self._route_adder("", "/_declared_routes", "GET", self._declared_routes_endpoint)
+    self._route_adder("", "/_models_tree", "GET", self._models_tree_endpoint)
+
+  async def _declared_routes_endpoint(self, request):
+    return response.text(self.router.routes_all)
+
+  async def _models_tree_endpoint(self, request):
+    self._print_tree(self._checkings, self.models)
+    return response.text("Check your server's logs")
+
   async def factory(self, request, path = "/", as_ = None):
     """
     The user will ask for /path/to/the/parent/new/member-list
@@ -220,6 +352,7 @@ class ySanic(Sanic):
       path = "/{}".format(path)
 
     resp = await self.resolve_path(path)
+
     if resp:
       if "path" not in request.json:
         request.json["path"] = path
@@ -248,6 +381,13 @@ class ySanic(Sanic):
     if not resp and len(parts) == 2:
       root = await self.get_root()
       resp = {"model": root, "args": parts[1]}
+    elif resp:
+      rest = request.raw_url.decode('utf-8').replace(resp["model"].get_url(), "")
+      if rest:
+        if rest.startswith("/"):
+          rest = rest[1:]
+        if "/" not in rest and rest:
+          resp["args"] = rest
 
     if resp:
       paper = resp["model"]
@@ -397,14 +537,16 @@ class MongoySanic(ySanic):
   async def set_table(self, request):
     request.app.table = request.app.mongo["test"][request.app.config.get("MONGO_TABLE")]
 
-def notaroute(func):
-  if not hasattr(func, "__decorators__"):
-    func.__decorators__ = {}
-  func.__decorators__["notaroute"] = True
+def notaroute(when = None, description = None):
+  def decorator(func):
+    if not hasattr(func, "__decorators__"):
+      func.__decorators__ = {}
+    func.__decorators__["notaroute"] = {"when": when, "description": description}
 
-  @wraps(func)
-  async def decorated(*args, **kwargs):
-    result = await func(*args, **kwargs)
-    return result
+    @wraps(func)
+    async def decorated(*args, **kwargs):
+      result = await func(*args, **kwargs)
+      return result
 
-  return decorated
+    return decorated
+  return decorator
