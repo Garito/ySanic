@@ -12,9 +12,9 @@ from sanic.log import logger
 from sanic.exceptions import InvalidUsage, MethodNotSupported
 
 from yModel import Schema, Tree, ErrorSchema
-from yModel.mongo import NotFound
+from yModel.mongo import NotFound, MongoJSONEncoder
 
-from json import dumps, JSONEncoder
+from json import dumps
 
 import re
 if hasattr(re, '_pattern_type'):
@@ -25,12 +25,12 @@ else:
 from sanic.views import CompositionView
 from typing import Type, Callable
 
-class MyEncoder(JSONEncoder):
+class MyEncoder(MongoJSONEncoder):
   def default(self, obj):
     if isclass(obj) or ismethod(obj) or isfunction(obj) or isinstance(obj, (CompositionView, frozenset, isPattern, Type, Callable, set)):
       return str(obj)
 
-    return JSONEncoder.default(self, obj)
+    return MongoJSONEncoder.default(self, obj)
 
 class ySanic(Sanic):
   log = logger
