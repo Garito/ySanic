@@ -3,7 +3,7 @@ from time import perf_counter, process_time
 from pathlib import PurePath
 from logging import getLogger, INFO
 from functools import wraps
-from smtplib import SMTP
+from smtplib import SMTP_SSL
 from email.mime.text import MIMEText
 
 from sanic import Sanic, response
@@ -430,9 +430,14 @@ class ySanic(Sanic):
       msg["To"] = to
       msg["Subject"] = subject
 
-      server = SMTP("{}:{}".format(self.config["SMTP_SERVER"], self.config.get("SMTP_PORT", 587)))
-      server.starttls()
-      server.login(self.config["SMTP_SENDER"], self.config["SMTP_SENDER_PASSWORD"])
+      # server = SMTP("{}:{}".format(self.config["SMTP_SERVER"], self.config.get("SMTP_PORT", 587)))
+
+      server = SMTP_SSL(self.config["SMTP_SERVER"], self.config.get("SMTP_PORT", 587))
+      if self.config.get("SMTP_TLS", False):
+        server.starttls()
+      else:
+        server.ehlo()
+      server.login(self.config.get("SMTP_SENDER_LOGIN", self.config["SMTP_SENDER"]), self.config["SMTP_SENDER_PASSWORD"])
       server.sendmail(self.config["SMTP_SENDER"], to, msg.as_string())
       server.quit()
 
